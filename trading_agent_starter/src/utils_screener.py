@@ -149,51 +149,63 @@ def screen_top_picks(
 
 # --- Back-compat adapters (keep for dashboard compatibility) -----------------
 
-import pandas as pd  # אם כבר קיים בתחילת הקובץ, אפשר להשאיר
-
-def screen_tickers(
-    universe: str = "Nasdaq 100 (wide)",
-    # גם השם הישן וגם החדש:
-    picks: int | None = None,
-    top_n: int | None = None,
-    # גם השם הישן וגם החדש:
-    order_budget: float | None = None,
-    per_order_budget: float | None = None,
-    fast: int = 20,
-    slow: int = 50,
-    use_rsi: bool = True,
-    min_confidence: int = 0,
-    min_avg_vol_20: int = 1_000_000,
-    max_price_allowed: float = 400.0,
-) -> pd.DataFrame:
+def screen_tickers(*args, **kwargs) -> pd.DataFrame:
     """
     Legacy entry-point used by the Streamlit dashboard.
-    Accepts both old (picks, order_budget) and new (top_n, per_order_budget) names,
-    and delegates to screen_top_picks().
+    Accepts both positional args (universe, top_n, per_order_budget)
+    and keyword args (top_n/picks, per_order_budget/order_budget), without conflicts.
+    Normalizes everything and delegates to screen_top_picks().
+    Precedence: explicit keywords override positionals.
     """
-    # ה־N וה־budget מחושבים מהפרמטר בשם שקיים
-    n = top_n if top_n is not None else (picks if picks is not None else 10)
-    budget = (
-        per_order_budget
-        if per_order_budget is not None
-        else (order_budget if order_budget is not None else 100.0)
-    )
+    # 1) universe
+    universe = kwargs.pop("universe", "Nasdaq 100 (wide)")
+    if len(args) >= 1:
+        universe = args[0] if "universe" not in kwargs else universe
 
+    # 2) top_n / picks (support both)
+    n = kwargs.pop("top_n", None)
+    if n is None:
+        n = kwargs.pop("picks", None)
+    if n is None and len(args) >= 2:
+        n = args[1]
+    if n is None:
+        n = 10
+    n = int(n)
+
+    # 3) per-order budget (support both)
+    budget = kwargs.pop("per_order_budget", None)
+    if budget is None:
+        budget = kwargs.pop("order_budget", None)
+    if budget is None and len(args) >= 3:
+        budget = args[2]
+    if budget is None:
+        budget = 100.0
+    budget = float(budget)
+
+    # 4) שאר הפרמטרים עם דיפולטים סבירים
+    fast             = int(kwargs.pop("fast", 20))
+    slow             = int(kwargs.pop("slow", 50))
+    use_rsi          = bool(kwargs.pop("use_rsi", True))
+    min_confidence   = int(kwargs.pop("min_confidence", 0))
+    min_avg_vol_20   = int(kwargs.pop("min_avg_vol_20", 1_000_000))
+    max_price_allowed= float(kwargs.pop("max_price_allowed", 400.0))
+
+    # אם נשאר משהו בלתי צפוי ב־kwargs – נתעלם בשקט
     return screen_top_picks(
         universe_name=universe,
-        top_n=int(n),
-        per_order_budget=float(budget),
-        fast=int(fast),
-        slow=int(slow),
-        use_rsi=bool(use_rsi),
-        min_confidence=int(min_confidence),
-        min_avg_vol_20=int(min_avg_vol_20),
-        max_price_allowed=float(max_price_allowed),
+        top_n=n,
+        per_order_budget=budget,
+        fast=fast,
+        slow=slow,
+        use_rsi=use_rsi,
+        min_confidence=min_confidence,
+        min_avg_vol_20=min_avg_vol_20,
+        max_price_allowed=max_price_allowed,
     )
 
 
 def find_top_picks(**kwargs) -> pd.DataFrame:
-    """Alias לשם ישן נוסף אם מישהו עוד קורא אליו."""
+    """Alias לשם ישן נוסף אם מישהו עוד משתמש בו."""
     return screen_top_picks(**kwargs)
 
 
