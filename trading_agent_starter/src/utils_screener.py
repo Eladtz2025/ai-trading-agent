@@ -147,14 +147,18 @@ def screen_top_picks(
     df_out = df_out.assign(_a=action_order).sort_values(by=["_a","score"], ascending=[True, False]).drop(columns=["_a"])
     return df_out.head(int(top_n or 10)).reset_index(drop=True)
 
-# --- Back-compat adapters (do not remove) ------------------------------------
+# --- Back-compat adapters (keep for dashboard compatibility) -----------------
 
-import pandas as pd  # if not already imported at top
+import pandas as pd  # אם כבר קיים בתחילת הקובץ, אפשר להשאיר
 
 def screen_tickers(
     universe: str = "Nasdaq 100 (wide)",
-    picks: int = 10,
-    order_budget: float = 100.0,
+    # גם השם הישן וגם החדש:
+    picks: int | None = None,
+    top_n: int | None = None,
+    # גם השם הישן וגם החדש:
+    order_budget: float | None = None,
+    per_order_budget: float | None = None,
     fast: int = 20,
     slow: int = 50,
     use_rsi: bool = True,
@@ -162,11 +166,23 @@ def screen_tickers(
     min_avg_vol_20: int = 1_000_000,
     max_price_allowed: float = 400.0,
 ) -> pd.DataFrame:
-    """Legacy name kept for the dashboard. Delegates to screen_top_picks()."""
+    """
+    Legacy entry-point used by the Streamlit dashboard.
+    Accepts both old (picks, order_budget) and new (top_n, per_order_budget) names,
+    and delegates to screen_top_picks().
+    """
+    # ה־N וה־budget מחושבים מהפרמטר בשם שקיים
+    n = top_n if top_n is not None else (picks if picks is not None else 10)
+    budget = (
+        per_order_budget
+        if per_order_budget is not None
+        else (order_budget if order_budget is not None else 100.0)
+    )
+
     return screen_top_picks(
         universe_name=universe,
-        top_n=int(picks),
-        per_order_budget=float(order_budget),
+        top_n=int(n),
+        per_order_budget=float(budget),
         fast=int(fast),
         slow=int(slow),
         use_rsi=bool(use_rsi),
@@ -175,6 +191,9 @@ def screen_tickers(
         max_price_allowed=float(max_price_allowed),
     )
 
+
 def find_top_picks(**kwargs) -> pd.DataFrame:
-    """Alias for callers using the old function name."""
+    """Alias לשם ישן נוסף אם מישהו עוד קורא אליו."""
     return screen_top_picks(**kwargs)
+
+
