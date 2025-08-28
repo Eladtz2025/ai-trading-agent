@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Trading Agent – Checklist v3</title>
+<style>
+:root{--bg:#0b1220;--card:#121a2b;--text:#e8eefc;--muted:#9db0d1;--accent:#5ac8fa}
+html,body{background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Inter,Roboto,Arial,sans-serif;margin:0}
+.wrap{max-width:860px;margin:28px auto;padding:0 16px}
+h1{margin:0 0 8px;font-size:26px} .sub{color:var(--muted);margin:0 0 18px}
+.card{background:var(--card);border-radius:14px;padding:18px 20px;margin:12px 0;box-shadow:0 6px 20px rgba(0,0,0,.3)}
+.row{display:flex;gap:10px;align-items:center;margin:6px 0}
+.row label{flex:1;cursor:pointer} .btn{background:var(--accent);color:#002; border:0;border-radius:12px;padding:9px 12px;font-weight:600;cursor:pointer}
+.small{color:var(--muted);font-size:12px;margin-left:10px}
+code{background:#0a1326;padding:2px 6px;border-radius:6px}
+</style></head>
+<body>
+<div class="wrap">
+  <h1>AI Trading Agent · Checklist v3</h1>
+  <p class="sub">התקדמות נשמרת ב‑localStorage. לחץ/י כדי לסמן. כפתור מהיר מסמן את מה שכבר עשינו.</p>
+  <div class="card">
+    <div class="row"><input id="env" type="checkbox"><label for="env"><b>Environment</b> – Python + venv הוגדרו</label></div>
+    <div class="row"><input id="deps" type="checkbox"><label for="deps"><b>Installed dependencies</b> / <code>requirements.txt</code></label></div>
+    <div class="row"><input id="data" type="checkbox"><label for="data"><b>Backtests</b> – ריצת SMA ושמירת גרפים ב‑<code>outputs/</code></label></div>
+    <div class="row"><input id="risk" type="checkbox"><label for="risk"><b>Risk</b> – עצירות/ATR/CSV</label></div>
+    <div class="row"><input id="logs" type="checkbox"><label for="logs"><b>Logging</b> – DuckDB ב‑<code>logs/trade_log.duckdb</code></label></div>
+    <div class="row"><input id="alpaca" type="checkbox"><label for="alpaca"><b>Alpaca Paper keys</b> ב‑<code>config/.env</code></label></div>
+    <div class="row"><input id="conn" type="checkbox"><label for="conn"><b>Connection check</b> – <code>check_alpaca_py.py</code> מציג ACTIVE</label></div>
+    <div class="row"><input id="exec" type="checkbox"><label for="exec"><b>Paper execution</b> – <code>paper_execute_sma.py</code> (dry + live)</label></div>
+    <div class="row"><input id="dash" type="checkbox"><label for="dash"><b>Dashboard</b> – Streamlit רץ מקומית</label></div>
+    <div class="row"><button id="fill" class="btn">Mark what we already finished</button>
+      <span class="small">אפשר לערוך ידנית אחרי.</span></div>
+  </div>
+</div>
+<script>
+const ids=["env","deps","data","risk","logs","alpaca","conn","exec","dash"], key="ai_trading_agent_checklist_v3";
+function load(){try{const s=JSON.parse(localStorage.getItem(key)||"{}");ids.forEach(id=>{const el=document.getElementById(id); if(el&&id in s) el.checked=!!s[id];});}catch{}}
+function save(){const s={};ids.forEach(id=>{const el=document.getElementById(id); if(el) s[id]=!!el.checked;}); localStorage.setItem(key,JSON.stringify(s));}
+ids.forEach(id=>document.getElementById(id).addEventListener("change",save));
+document.getElementById("fill").addEventListener("click",()=>{const done={env:1,deps:1,data:1,risk:1,logs:1,alpaca:1,conn:1}; ids.forEach(id=>{document.getElementById(id).checked=!!done[id];}); save();});
+load();
+</script>
+</body></html>
