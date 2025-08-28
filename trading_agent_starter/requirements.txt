@@ -1,14 +1,6 @@
-
-numpy>=2.0,<2.3
-pandas>=2.2,<2.4
-matplotlib>=3.8,<3.10
-yfinance>=0.2.54
-backtrader>=1.9.78.123
-requests>=2.31
-python-dotenv>=1.0
-alpaca-py>=0.18
-tiingo>=0.16
-duckdb>=1.0
-# optional:
-# polars>=1.5
-# requests-cache>=1.2
+streamlit==1.38.0
+alpaca-py==0.30.1
+yfinance==0.2.65
+duckdb==1.1.3
+pandas==2.2.2
+numpy==1.26.4
