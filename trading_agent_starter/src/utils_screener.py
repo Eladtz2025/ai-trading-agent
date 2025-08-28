@@ -1,116 +1,148 @@
 # src/utils_screener.py
 from __future__ import annotations
 
-import concurrent.futures as cf
-from typing import List, Dict, Any
-
-import numpy as np
+import time
+from typing import List, Dict, Optional
 import pandas as pd
 import yfinance as yf
 
 from paper_execute_sma import generate_recommendation
 
-def _avg_volume_20(ticker: str) -> float:
+# yfinance download tuning for cloud environments
+YF_KW = dict(period="9mo", interval="1d", auto_adjust=False, progress=False, threads=False)
+
+# Symbol fixes (e.g., renamed tickers that commonly fail)
+SYMBOL_FIXES: Dict[str, str] = {
+    "FISV": "FI",
+}
+
+def fix_symbol(sym: str) -> str:
+    s = sym.strip().upper()
+    return SYMBOL_FIXES.get(s, s)
+
+def safe_download(sym: str) -> Optional[pd.DataFrame]:
+    """
+    Best-effort Yahoo download with graceful failure (returns None if not usable).
+    """
     try:
-        df = yf.download(ticker, period="3mo", interval="1d", auto_adjust=True, progress=False)
-        if df.empty or "Volume" not in df.columns:
-            return 0.0
-        return float(df["Volume"].tail(20).mean())
-    except Exception:
-        return 0.0
-
-def _score_row(rec: Dict[str,Any], avg_vol_20: float) -> float:
-    action = rec.get("action")
-    price = rec.get("price") or 0.0
-    sma_f = rec.get("sma_fast") or 0.0
-    sma_s = rec.get("sma_slow") or 0.0
-    rsi   = rec.get("rsi")
-    atrp  = rec.get("atr_pct")
-
-    score = 0.0
-    if action == "BUY":
-        score += float(rec.get("confidence", 0))
-    elif action == "SELL":
-        score -= float(rec.get("confidence", 0))
-
-    if price > 0:
-        dist = abs(sma_f - sma_s) / price
-        score += min(dist * 1000.0, 18.0)
-
-    if sma_f > sma_s:
-        score += 8.0
-
-    if rsi is not None and not np.isnan(rsi):
-        if 55 <= rsi <= 70:
-            score += 6.0
-        elif rsi > 80 or rsi < 40:
-            score -= 6.0
-
-    if atrp is not None:
-        if atrp >= 0.06:
-            score -= 18.0
-        elif atrp >= 0.04:
-            score -= 8.0
-
-    if avg_vol_20 < 1_000_000:
-        score -= 20.0
-
-    return float(score)
-
-def _one(ticker: str, fast: int, slow: int, per_order_budget: float, use_rsi: bool) -> Dict[str,Any]:
-    try:
-        rec = generate_recommendation(ticker, fast, slow, per_order_budget, use_rsi=use_rsi)
-        av20 = rec.get("avg_vol_20")
-        if av20 is None:
-            av20 = _avg_volume_20(ticker)
-        rec["avg_vol_20"] = float(av20)
-        rec["score"] = _score_row(rec, av20)
-        return rec
-    except Exception as e:
-        return {"ticker": ticker, "error": str(e), "score": -1e9, "action":"WAIT", "confidence":0}
-
-def screen_tickers(
-    tickers: List[str],
-    fast: int,
-    slow: int,
-    per_order_budget: float,
-    use_rsi: bool = True,
-    top_n: int = 10,
-    min_confidence: int = 0,
-) -> pd.DataFrame:
-    tickers = list(dict.fromkeys([t.strip().upper() for t in tickers if t and t.strip()]))[:300]
-    results: List[Dict[str,Any]] = []
-
-    with cf.ThreadPoolExecutor(max_workers=6) as ex:
-        futs = [ex.submit(_one, t, fast, slow, per_order_budget, use_rsi) for t in tickers]
-        for f in cf.as_completed(futs):
-            results.append(f.result())
-
-    df = pd.DataFrame(results)
-    if df.empty:
+        df = yf.download(sym, **YF_KW)
+        if df is None or df.empty or "Close" not in df.columns:
+            return None
         return df
+    except Exception:
+        return None
 
-    # Keep only known actions
-    df = df[df["action"].isin(["BUY","WAIT","SELL"])].copy()
-
-    # NEW: confidence threshold
-    if "confidence" in df.columns:
-        df = df[df["confidence"] >= int(min_confidence)].copy()
-
-    for col in ["atr_pct","confidence","avg_vol_20"]:
-        if col not in df.columns:
-            df[col] = np.nan
-
-    df = df.sort_values(
-        by=["score","confidence","avg_vol_20"],
-        ascending=[False, False, False],
-        na_position="last"
-    )
-
-    keep_cols = [
-        "ticker","score","action","confidence","price","amount","stop","take",
-        "atr_pct","rsi","sma_fast","sma_slow","avg_vol_20",
-        "horizon","days_to_stop","days_to_take","reason"
+def get_universe(name: str = "Nasdaq 100 (wide)") -> List[str]:
+    """
+    Returns a 'wide' Nasdaq 100 list (can include a few extras).
+    Adjust/extend as you like; invalids will be skipped gracefully.
+    """
+    base = [
+        "AAPL","MSFT","NVDA","GOOGL","GOOG","AMZN","META","TSLA","AVGO","COST","NFLX","ADBE",
+        "CMCSA","PEP","TMUS","AMD","INTC","QCOM","TXN","AMAT","PDD","MU","CSCO","ISRG","LIN",
+        "SBUX","REGN","MRVL","ISRG","ADI","BKNG","LRCX","VRTX","INTU","PYPL","TEAM","WDAY",
+        "ORLY","CDNS","ADP","PANW","SNPS","MNST","KDP","CRWD","MELI","ZS","DDOG","FTNT",
+        "GILD","ABNB","CTAS","KHC","HON","MDLZ","VRTX","ADSK","CSX","AEP","AON","MDT",
+        # a few more liquid names
+        "ISRG","MRVL","AMAT","NXPI","ON","MAR","EA","SNPS"
     ]
-    show_cols = [c for c in keep_cols if c in df.columns]
-    return df[show_cols].head(int(top_n)).reset_index(drop=True)
+    # de-dup
+    return sorted(set(base))
+
+def _score_row(confidence: int, atr_pct: Optional[float]) -> int:
+    """
+    Produce a simple sortable 'score' similar in spirit to what you had.
+    Higher confidence + lower ATR% => higher score.
+    """
+    base = int(confidence or 0)
+    if atr_pct is None:
+        return 100 + base
+    bonus = max(0, int((0.05 - min(0.05, float(atr_pct))) * 1000))  # small reward for low ATR%
+    return 100 + base + bonus
+
+def screen_top_picks(
+    *,
+    universe_name: str = "Nasdaq 100 (wide)",
+    top_n: int = 10,
+    per_order_budget: float = 100.0,
+    fast: int = 20,
+    slow: int = 50,
+    use_rsi: bool = True,
+    min_confidence: int = 0,
+    min_avg_vol_20: int = 1_000_000,
+    max_price_allowed: float = 400.0,
+) -> pd.DataFrame:
+    """
+    Scans a ticker universe and returns a table of candidates with
+    columns expected by the dashboard:
+      ticker, score, action, confidence, price, amount, stop, take,
+      atr_pct, rsi, sma_fast, sma_slow, avg_vol_20, horizon,
+      days_to_stop, days_to_take, reason
+    """
+    tickers = get_universe(universe_name)
+    rows = []
+
+    for sym in tickers:
+        t = fix_symbol(sym)
+        # quick preflight to avoid heavy calls on dead symbols
+        df = safe_download(t)
+        if df is None:
+            continue
+
+        # call the same engine used by the single-ticker flow
+        rec = generate_recommendation(
+            ticker=t, fast=fast, slow=slow,
+            notional=per_order_budget, use_rsi=use_rsi
+        )
+
+        # quality gates enforced inside generate_recommendation already
+        # we apply UI-level filters here
+        if rec.get("confidence", 0) < int(min_confidence or 0):
+            continue
+        # rec contains avg_vol_20, price, etc. (computed inside)
+        avg_vol_20 = rec.get("avg_vol_20")
+        if avg_vol_20 is not None and float(avg_vol_20) < float(min_avg_vol_20):
+            continue
+        price = rec.get("price")
+        if price is not None and float(price) > float(max_price_allowed) and float(rec.get("amount", 0)) < float(price):
+            # too expensive vs budget and no fractional – skip
+            continue
+
+        # build output row
+        atr_pct = rec.get("atr_pct")
+        confidence = int(rec.get("confidence") or 0)
+        rows.append({
+            "ticker": t,
+            "score": _score_row(confidence, atr_pct),
+            "action": rec.get("action"),
+            "confidence": confidence,
+            "price": rec.get("price"),
+            "amount": rec.get("amount"),
+            "stop": rec.get("stop"),
+            "take": rec.get("take"),
+            "atr_pct": atr_pct,
+            "rsi": rec.get("rsi"),
+            "sma_fast": rec.get("sma_fast"),
+            "sma_slow": rec.get("sma_slow"),
+            "avg_vol_20": avg_vol_20,
+            "horizon": rec.get("horizon"),
+            "days_to_stop": rec.get("days_to_stop"),
+            "days_to_take": rec.get("days_to_take"),
+            "reason": rec.get("reason"),
+        })
+
+        # be gentle with Yahoo while running in the cloud
+        time.sleep(0.15)
+
+    if not rows:
+        return pd.DataFrame(columns=[
+            "ticker","score","action","confidence","price","amount",
+            "stop","take","atr_pct","rsi","sma_fast","sma_slow","avg_vol_20",
+            "horizon","days_to_stop","days_to_take","reason"
+        ])
+
+    df_out = pd.DataFrame(rows)
+    # BUY first, then by score desc
+    action_order = pd.Categorical(df_out["action"], categories=["BUY","SELL","WAIT"], ordered=True)
+    df_out = df_out.assign(_a=action_order).sort_values(by=["_a","score"], ascending=[True, False]).drop(columns=["_a"])
+    return df_out.head(int(top_n or 10)).reset_index(drop=True)
