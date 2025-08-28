@@ -146,3 +146,35 @@ def screen_top_picks(
     action_order = pd.Categorical(df_out["action"], categories=["BUY","SELL","WAIT"], ordered=True)
     df_out = df_out.assign(_a=action_order).sort_values(by=["_a","score"], ascending=[True, False]).drop(columns=["_a"])
     return df_out.head(int(top_n or 10)).reset_index(drop=True)
+
+# --- Back-compat adapters (do not remove) ------------------------------------
+
+import pandas as pd  # if not already imported at top
+
+def screen_tickers(
+    universe: str = "Nasdaq 100 (wide)",
+    picks: int = 10,
+    order_budget: float = 100.0,
+    fast: int = 20,
+    slow: int = 50,
+    use_rsi: bool = True,
+    min_confidence: int = 0,
+    min_avg_vol_20: int = 1_000_000,
+    max_price_allowed: float = 400.0,
+) -> pd.DataFrame:
+    """Legacy name kept for the dashboard. Delegates to screen_top_picks()."""
+    return screen_top_picks(
+        universe_name=universe,
+        top_n=int(picks),
+        per_order_budget=float(order_budget),
+        fast=int(fast),
+        slow=int(slow),
+        use_rsi=bool(use_rsi),
+        min_confidence=int(min_confidence),
+        min_avg_vol_20=int(min_avg_vol_20),
+        max_price_allowed=float(max_price_allowed),
+    )
+
+def find_top_picks(**kwargs) -> pd.DataFrame:
+    """Alias for callers using the old function name."""
+    return screen_top_picks(**kwargs)
