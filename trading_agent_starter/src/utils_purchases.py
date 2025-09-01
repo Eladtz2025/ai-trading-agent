@@ -99,4 +99,66 @@ def load_latest_buy_info(db_path: str = DEFAULT_DB) -> Dict[str, Dict[str, Any]]
             return {}
 
         grp = (
-            norm.groupby("symbol", as_ind_
+            norm.groupby("symbol", as_index=False)
+                .agg({"purchase_ts": "max", "purchase_date": "max", "horizon_days": "last"})
+        )
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for _, r in grp.iterrows():
+            out[str(r["symbol"]).upper()] = {
+                "buy_date": r["purchase_date"],
+                "horizon_days": (int(r["horizon_days"]) if pd.notnull(r["horizon_days"]) else None),
+            }
+        return out
+    except Exception:
+        return {}
+
+def compute_desired_sell_date(buy_date, horizon_days=None, fallback_days: int = DEFAULT_MAX_HOLD_DAYS):
+    """If horizon_days is provided → buy_date + horizon_days; else → +fallback_days (default 10)."""
+    if buy_date is None or pd.isna(buy_date):
+        return None
+    days = int(horizon_days) if (horizon_days is not None and not pd.isna(horizon_days)) else int(fallback_days)
+    return buy_date + timedelta(days=days)
+
+def load_latest_targets(db_path: str = DEFAULT_DB) -> Dict[str, float]:
+    """
+    Returns mapping of latest target (take-profit) per symbol from 'trades'.
+    Preference order for columns: 'rec_take', 'take', 'take_price', 'tp', 'takeprofit'.
+    Chooses the most recent record per symbol using timestamp columns if available.
+    """
+    try:
+        con = _connect(db_path)
+        tables = [r[0] for r in con.execute("SHOW TABLES").fetchall()]
+        if "trades" not in tables:
+            return {}
+
+        df = con.execute("SELECT * FROM trades").df()
+        if df is None or df.empty:
+            return {}
+
+        sym_col = _pick(df, ["symbol", "ticker", "asset_symbol", "asset"])
+        take_col = _pick(df, ["rec_take", "take", "take_price", "tp", "takeprofit"])
+        ts_col = _pick(df, ["filled_at", "executed_at", "ts", "timestamp", "created_at", "time", "date"])
+        if not sym_col or not take_col:
+            return {}
+
+        d = df.copy()
+        d["symbol"] = d[sym_col].astype(str).str.upper()
+        d["take"] = pd.to_numeric(d[take_col], errors="coerce")
+        d["ts"] = _safe_to_datetime(d[ts_col]) if ts_col else pd.to_datetime(pd.Series([], dtype="datetime64[ns, UTC]"))
+        d = d.dropna(subset=["take"])
+        if d.empty:
+            return {}
+
+        # latest per symbol
+        d = d.sort_values("ts").groupby("symbol", as_index=False).tail(1)
+        return {row["symbol"]: float(row["take"]) for _, row in d.iterrows() if pd.notnull(row["take"])}
+    except Exception:
+        return {}
+
+# --------------------------------------------------------------------
+# Backward-compat: avoid ImportError if some old code still imports it
+# --------------------------------------------------------------------
+def render_purchases_by_day_panel(*args, **kwargs):
+    """Deprecated placeholder. Kept to avoid import errors if an old import remains."""
+    return None
