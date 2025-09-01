@@ -276,10 +276,8 @@ with colB:
         st.info("Run the screener first.")
 
 st.divider()
-render_purchases_by_day_panel()  # Tables by purchase date + "Exit by (date)"
-
-st.divider()
 st.caption("This tool ranks candidates, not guarantees. Paper only – for learning. Logs: logs/trade_log.duckdb")
+
 
 
 
