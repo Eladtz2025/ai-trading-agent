@@ -18,7 +18,6 @@ from paper_execute_sma import (
 from utils_screener import screen_tickers
 from utils_universe import UNIVERSES
 from paper_execute_sma import get_trade_followup
-from src.utils_purchases import render_purchases_by_day_panel
 from src.utils_purchases import load_latest_buy_info, compute_desired_sell_date
 
 st.set_page_config(page_title="AI Trading Agent – Paper", layout="wide")
@@ -289,6 +288,7 @@ render_purchases_by_day_panel()  # Tables by purchase date + "Exit by (date)"
 
 st.divider()
 st.caption("This tool ranks candidates, not guarantees. Paper only – for learning. Logs: logs/trade_log.duckdb")
+
 
 
 
