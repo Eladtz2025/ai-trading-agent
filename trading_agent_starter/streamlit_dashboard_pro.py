@@ -11,15 +11,18 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
 
+# local modules
 from paper_execute_sma import (
     generate_recommendation, execute_order, get_open_positions,
-    close_all_positions_paper, get_open_orders, configure_risk
+    close_all_positions_paper, get_open_orders, configure_risk, get_trade_followup
 )
 from utils_screener import screen_tickers
 from utils_universe import UNIVERSES
-from paper_execute_sma import get_trade_followup
-from src.utils_purchases import load_latest_buy_info, compute_desired_sell_date
-from src.utils_purchases import load_latest_buy_info, compute_desired_sell_date, load_latest_targets
+
+# NOTE: import from utils_purchases (not src.utils_purchases) because SRC_DIR is on sys.path
+from utils_purchases import load_latest_buy_info, compute_desired_sell_date, load_latest_targets
+
+# -----------------------------------------------------------------------------
 
 st.set_page_config(page_title="AI Trading Agent – Paper", layout="wide")
 st.title("AI Trading Agent – Paper Trading")
@@ -51,7 +54,8 @@ if dry_run:
 @st.cache_data(ttl=300)
 def load_chart_data(sym: str, f: int, s: int):
     df = yf.download(sym, period="6mo", interval="1d", auto_adjust=True, progress=False)
-    if df.empty: return pd.DataFrame()
+    if df.empty:
+        return pd.DataFrame()
     df = df.dropna().copy()
     df["SMA_FAST"] = df["Close"].rolling(int(f), min_periods=int(f)).mean()
     df["SMA_SLOW"] = df["Close"].rolling(int(s), min_periods=int(s)).mean()
@@ -125,40 +129,43 @@ with colL:
                 except Exception as e:
                     st.error(f"Close-all failed: {e}")
 
+# ---------- Open Positions ----------
 st.subheader("Open Positions (Paper)")
 try:
-    pos_df = get_open_positions()  # הפונקציה הקיימת אצלך
+    pos_df = get_open_positions()
     if pos_df.empty:
         st.info("No open positions.")
     else:
-        # העמודות הבסיסיות שלך
+        # base columns
         cols = ["symbol","side","qty","avg_entry_price","current_price","market_value","unrealized_pl","unrealized_plpc"]
         cols = [c for c in cols if c in pos_df.columns]
         pos_df_show = pos_df[cols].copy()
 
-        # המרות מספריות
+        # numerics
         for c in ["qty","avg_entry_price","current_price","market_value","unrealized_pl","unrealized_plpc"]:
             if c in pos_df_show.columns:
                 pos_df_show[c] = pd.to_numeric(pos_df_show[c], errors="coerce")
         if "unrealized_plpc" in pos_df_show.columns:
             pos_df_show["unrealized_plpc"] = (pos_df_show["unrealized_plpc"] * 100).round(2)
 
-        # === NEW: Change % (current vs entry)
+        # Change % (price change from entry)
         if "avg_entry_price" in pos_df_show.columns and "current_price" in pos_df_show.columns:
             base = pos_df_show["avg_entry_price"].replace(0, pd.NA)
             pos_df_show["change_pct"] = ((pos_df_show["current_price"] / base) - 1.0) * 100
             pos_df_show["change_pct"] = pos_df_show["change_pct"].round(2)
 
-# Target price + upside to target
-targets = load_latest_targets()
-pos_df_show["target_price"] = pos_df_show["symbol"].map(lambda s: targets.get(str(s).upper()))
-if "current_price" in pos_df_show.columns:
-    pos_df_show["upside_to_target_pct"] = (
-        (pos_df_show["target_price"] / pos_df_show["current_price"] - 1.0) * 100
-    )
-    pos_df_show["upside_to_target_pct"] = pd.to_numeric(pos_df_show["upside_to_target_pct"], errors="coerce").round(2)
+        # Target & Upside to Target %
+        targets = load_latest_targets()  # {"AAPL": target_price, ...}
+        pos_df_show["target_price"] = pos_df_show["symbol"].map(lambda s: targets.get(str(s).upper()))
+        if "current_price" in pos_df_show.columns:
+            pos_df_show["upside_to_target_pct"] = (
+                (pos_df_show["target_price"] / pos_df_show["current_price"] - 1.0) * 100
+            )
+            pos_df_show["upside_to_target_pct"] = pd.to_numeric(
+                pos_df_show["upside_to_target_pct"], errors="coerce"
+            ).round(2)
 
-        # === NEW: Buy date + Desired sell date (מ-DuckDB)
+        # Buy date & desired sell date
         buy_map = load_latest_buy_info()
 
         def _buy_date(sym):
@@ -174,12 +181,15 @@ if "current_price" in pos_df_show.columns:
         pos_df_show["buy_date"] = pos_df_show["symbol"].map(_buy_date)
         pos_df_show["desired_sell_date"] = pos_df_show["symbol"].map(_desired)
 
-        # סידור העמודות: Change % אחרי current_price; Buy/Desired אחרי avg_entry_price
+        # display order
         display_cols = cols.copy()
-        if "change_pct" in pos_df_show.columns:
-            idx_cp = display_cols.index("current_price")+1 if "current_price" in display_cols else len(display_cols)
-            if "change_pct" not in display_cols:
-                display_cols.insert(idx_cp, "change_pct")
+        # after current_price: Change %, Target, Upside to Target %
+        idx_after_price = display_cols.index("current_price")+1 if "current_price" in display_cols else len(display_cols)
+        for newc in ["change_pct", "target_price", "upside_to_target_pct"]:
+            if newc in pos_df_show.columns and newc not in display_cols:
+                display_cols.insert(idx_after_price, newc)
+                idx_after_price += 1
+        # after avg_entry_price: dates
         idx_avg = display_cols.index("avg_entry_price")+1 if "avg_entry_price" in display_cols else len(display_cols)
         for newc in ["buy_date","desired_sell_date"]:
             if newc not in display_cols:
@@ -187,16 +197,29 @@ if "current_price" in pos_df_show.columns:
 
         df_ui = pos_df_show[display_cols].rename(columns={
             "change_pct": "Change %",
+            "target_price": "Target",
+            "upside_to_target_pct": "Upside to Target %",
             "buy_date": "Buy date",
             "desired_sell_date": "Desired sell date"
         })
-        st.dataframe(df_ui, use_container_width=True)
+
+        # percent formatting
+        col_cfg = {}
+        if "Change %" in df_ui.columns:
+            col_cfg["Change %"] = st.column_config.NumberColumn("Change %", format="%.2f%%")
+        if "Upside to Target %" in df_ui.columns:
+            col_cfg["Upside to Target %"] = st.column_config.NumberColumn("Upside to Target %", format="%.2f%%")
+        if "unrealized_plpc" in df_ui.columns:
+            col_cfg["unrealized_plpc"] = st.column_config.NumberColumn("P&L %", format="%.2f%%")
+
+        st.dataframe(df_ui, use_container_width=True, column_config=col_cfg)
 except Exception as e:
     st.error(f"Failed to fetch positions: {e}")
 
 if st.button("Refresh positions"):
     st.rerun()
 
+# ---------- Purchased – Follow-up ----------
 st.divider()
 st.subheader("Purchased – Follow-up (last 5 days)")
 
@@ -244,10 +267,9 @@ with colA:
         with st.spinner("Screening universe..."):
             tickers = UNIVERSES[uni_name]
             df_top = screen_tickers(
-    tickers, int(fast), int(slow), float(per_order_budget),
-    use_rsi=use_rsi, top_n=int(top_n), min_confidence=int(min_conf)
-)
-
+                tickers, int(fast), int(slow), float(per_order_budget),
+                use_rsi=use_rsi, top_n=int(top_n), min_confidence=int(min_conf)
+            )
             st.session_state["screener_df"] = df_top
 
     df_top = st.session_state.get("screener_df")
@@ -287,12 +309,3 @@ with colB:
 
 st.divider()
 st.caption("This tool ranks candidates, not guarantees. Paper only – for learning. Logs: logs/trade_log.duckdb")
-
-
-
-
-
-
-
-
-
