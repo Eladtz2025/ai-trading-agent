@@ -19,6 +19,7 @@ from utils_screener import screen_tickers
 from utils_universe import UNIVERSES
 from paper_execute_sma import get_trade_followup
 from src.utils_purchases import render_purchases_by_day_panel
+from src.utils_purchases import load_latest_buy_info, compute_desired_sell_date
 
 st.set_page_config(page_title="AI Trading Agent – Paper", layout="wide")
 st.title("AI Trading Agent – Paper Trading")
@@ -125,40 +126,50 @@ with colL:
                     st.error(f"Close-all failed: {e}")
 
 with colR:
-    st.subheader("Open Positions (Paper)")
-    try:
-        pos_df = get_open_positions()
-        if pos_df.empty:
-            st.info("No open positions.")
-        else:
-            cols = ["symbol","side","qty","avg_entry_price","current_price","market_value","unrealized_pl","unrealized_plpc"]
-            cols = [c for c in cols if c in pos_df.columns]
-            pos_df_show = pos_df[cols].copy()
-            # cast to numeric to avoid dtype errors
-            for c in ["qty","avg_entry_price","current_price","market_value","unrealized_pl","unrealized_plpc"]:
-                if c in pos_df_show.columns:
-                    pos_df_show[c] = pd.to_numeric(pos_df_show[c], errors="coerce")
-            if "unrealized_plpc" in pos_df_show.columns:
-                pos_df_show["unrealized_plpc"] = (pos_df_show["unrealized_plpc"] * 100).round(2)
-            st.dataframe(pos_df_show, use_container_width=True)
-    except Exception as e:
-        st.error(f"Failed to fetch positions: {e}")
-    if st.button("Refresh positions"):
-        st.rerun()
-
-st.divider()
-st.subheader("Open Orders (Paper)")
+st.subheader("Open Positions (Paper)")
 try:
-    ord_df = get_open_orders()
-    if ord_df.empty:
-        st.info("No open orders.")
+    pos_df = get_open_positions()  # your existing helper
+    if pos_df.empty:
+        st.info("No open positions.")
     else:
-        cols = ["symbol","side","type","qty","limit_price","stop_price","status","submitted_at"]
-        show = [c for c in cols if c in ord_df.columns]
-        st.dataframe(ord_df[show], use_container_width=True)
+        # Base columns you already show
+        cols_base = ["symbol","side","qty","avg_entry_price","current_price","market_value","unrealized_pl","unrealized_plpc"]
+        cols_base = [c for c in cols_base if c in pos_df.columns]
+        pos_df_show = pos_df[cols_base].copy()
+
+        # Cast numerics (same as your code)
+        for c in ["qty","avg_entry_price","current_price","market_value","unrealized_pl","unrealized_plpc"]:
+            if c in pos_df_show.columns:
+                pos_df_show[c] = pd.to_numeric(pos_df_show[c], errors="coerce")
+        if "unrealized_plpc" in pos_df_show.columns:
+            pos_df_show["unrealized_plpc"] = (pos_df_show["unrealized_plpc"] * 100).round(2)
+
+        # === NEW: add Buy date + Desired sell date ===
+        buy_map = load_latest_buy_info()  # {"AAPL": {"buy_date": date, "horizon_days": int|None}, ...}
+
+        def _buy_date(sym):
+            info = buy_map.get(str(sym).upper())
+            return info["buy_date"] if info else None
+
+        def _desired(sym):
+            info = buy_map.get(str(sym).upper())
+            return compute_desired_sell_date(info["buy_date"], info.get("horizon_days")) if info and info.get("buy_date") else None
+
+        pos_df_show["Buy date"] = pos_df_show["symbol"].map(_buy_date)
+        pos_df_show["Desired sell date"] = pos_df_show["symbol"].map(_desired)
+
+        # Place the two new columns right after avg_entry_price (or at the end if missing)
+        show_cols = cols_base.copy()
+        insert_at = show_cols.index("avg_entry_price")+1 if "avg_entry_price" in show_cols else len(show_cols)
+        for newc in ["Buy date","Desired sell date"]:
+            if newc not in show_cols:
+                show_cols.insert(insert_at, newc); insert_at += 1
+
+        st.dataframe(pos_df_show[show_cols], use_container_width=True)
 except Exception as e:
-    st.error(f"Failed to fetch orders: {e}")
-if st.button("Refresh orders"):
+    st.error(f"Failed to fetch positions: {e}")
+
+if st.button("Refresh positions"):
     st.rerun()
 
 st.divider()
@@ -254,5 +265,6 @@ render_purchases_by_day_panel()  # Tables by purchase date + "Exit by (date)"
 
 st.divider()
 st.caption("This tool ranks candidates, not guarantees. Paper only – for learning. Logs: logs/trade_log.duckdb")
+
 
 
