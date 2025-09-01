@@ -19,6 +19,7 @@ from utils_screener import screen_tickers
 from utils_universe import UNIVERSES
 from paper_execute_sma import get_trade_followup
 from src.utils_purchases import load_latest_buy_info, compute_desired_sell_date
+from src.utils_purchases import load_latest_buy_info, compute_desired_sell_date, load_latest_targets
 
 st.set_page_config(page_title="AI Trading Agent – Paper", layout="wide")
 st.title("AI Trading Agent – Paper Trading")
@@ -147,6 +148,15 @@ try:
             base = pos_df_show["avg_entry_price"].replace(0, pd.NA)
             pos_df_show["change_pct"] = ((pos_df_show["current_price"] / base) - 1.0) * 100
             pos_df_show["change_pct"] = pos_df_show["change_pct"].round(2)
+
+# Target price + upside to target
+targets = load_latest_targets()
+pos_df_show["target_price"] = pos_df_show["symbol"].map(lambda s: targets.get(str(s).upper()))
+if "current_price" in pos_df_show.columns:
+    pos_df_show["upside_to_target_pct"] = (
+        (pos_df_show["target_price"] / pos_df_show["current_price"] - 1.0) * 100
+    )
+    pos_df_show["upside_to_target_pct"] = pd.to_numeric(pos_df_show["upside_to_target_pct"], errors="coerce").round(2)
 
         # === NEW: Buy date + Desired sell date (מ-DuckDB)
         buy_map = load_latest_buy_info()
@@ -277,6 +287,7 @@ with colB:
 
 st.divider()
 st.caption("This tool ranks candidates, not guarantees. Paper only – for learning. Logs: logs/trade_log.duckdb")
+
 
 
 
