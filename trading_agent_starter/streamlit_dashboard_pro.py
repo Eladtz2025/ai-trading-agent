@@ -126,58 +126,75 @@ with colL:
                     st.error(f"Close-all failed: {e}")
 
 with colR:
-st.subheader("Open Positions (Paper)")
-try:
-    pos_df = get_open_positions()
-    if pos_df.empty:
-        st.info("No open positions.")
-    else:
-        # keep your original base columns
-        cols = ["symbol","side","qty","avg_entry_price","current_price","market_value","unrealized_pl","unrealized_plpc"]
-        cols = [c for c in cols if c in pos_df.columns]
-        pos_df_show = pos_df[cols].copy()
+    st.subheader("Open Positions (Paper)")
+    try:
+        pos_df = get_open_positions()  # הפונקציה שכבר קיימת אצלך
+        if pos_df.empty:
+            st.info("No open positions.")
+        else:
+            # העמודות הבסיסיות (כמו אצלך)
+            cols = ["symbol","side","qty","avg_entry_price","current_price","market_value","unrealized_pl","unrealized_plpc"]
+            cols = [c for c in cols if c in pos_df.columns]
+            pos_df_show = pos_df[cols].copy()
 
-        # numeric casting (your original)
-        for c in ["qty","avg_entry_price","current_price","market_value","unrealized_pl","unrealized_plpc"]:
-            if c in pos_df_show.columns:
-                pos_df_show[c] = pd.to_numeric(pos_df_show[c], errors="coerce")
-        if "unrealized_plpc" in pos_df_show.columns:
-            pos_df_show["unrealized_plpc"] = (pos_df_show["unrealized_plpc"] * 100).round(2)
+            # המרות מספריות (כמו בקוד שלך)
+            for c in ["qty","avg_entry_price","current_price","market_value","unrealized_pl","unrealized_plpc"]:
+                if c in pos_df_show.columns:
+                    pos_df_show[c] = pd.to_numeric(pos_df_show[c], errors="coerce")
+            if "unrealized_plpc" in pos_df_show.columns:
+                pos_df_show["unrealized_plpc"] = (pos_df_show["unrealized_plpc"] * 100).round(2)
 
-        # >>> NEW: add dates from DuckDB trades <<<
-        buy_map = load_latest_buy_info()
+            # === חדש 1: Change % (שינוי ממחיר כניסה למחיר נוכחי) ===
+            if "avg_entry_price" in pos_df_show.columns and "current_price" in pos_df_show.columns:
+                base = pos_df_show["avg_entry_price"].replace(0, pd.NA)
+                pos_df_show["change_pct"] = ((pos_df_show["current_price"] / base) - 1.0) * 100
+                pos_df_show["change_pct"] = pos_df_show["change_pct"].round(2)
 
-        def _buy_date(sym):
-            info = buy_map.get(str(sym).upper())
-            return info["buy_date"] if info else None
+            # === חדש 2: Buy date + Desired sell date (מדאטהבלוג) ===
+            buy_map = load_latest_buy_info()
 
-        def _desired(sym):
-            info = buy_map.get(str(sym).upper())
-            if info and info.get("buy_date"):
-                return compute_desired_sell_date(info["buy_date"], info.get("horizon_days"))
-            return None
+            def _buy_date(sym):
+                info = buy_map.get(str(sym).upper())
+                return info["buy_date"] if info else None
 
-        pos_df_show["buy_date"] = pos_df_show["symbol"].map(_buy_date)
-        pos_df_show["desired_sell_date"] = pos_df_show["symbol"].map(_desired)
+            def _desired(sym):
+                info = buy_map.get(str(sym).upper())
+                if info and info.get("buy_date"):
+                    return compute_desired_sell_date(info["buy_date"], info.get("horizon_days"))
+                return None
 
-        # show the two new columns right after avg_entry_price
-        display_cols = cols.copy()
-        insert_at = display_cols.index("avg_entry_price")+1 if "avg_entry_price" in display_cols else len(display_cols)
-        for newc in ["buy_date","desired_sell_date"]:
-            if newc not in display_cols:
-                display_cols.insert(insert_at, newc); insert_at += 1
+            pos_df_show["buy_date"] = pos_df_show["symbol"].map(_buy_date)
+            pos_df_show["desired_sell_date"] = pos_df_show["symbol"].map(_desired)
 
-        # pretty headers for UI only
-        df_ui = pos_df_show[display_cols].rename(columns={
-            "buy_date": "Buy date",
-            "desired_sell_date": "Desired sell date"
-        })
-        st.dataframe(df_ui, use_container_width=True)
-except Exception as e:
-    st.error(f"Failed to fetch positions: {e}")
+            # סידור העמודות להצגה:
+            display_cols = cols.copy()
 
-if st.button("Refresh positions"):
-    st.rerun()
+            # נכניס Change % אחרי current_price
+            if "change_pct" in pos_df_show.columns:
+                idx_cp = display_cols.index("current_price")+1 if "current_price" in display_cols else len(display_cols)
+                if "change_pct" not in display_cols:
+                    display_cols.insert(idx_cp, "change_pct")
+
+            # נכניס Buy/Desired dates אחרי avg_entry_price
+            idx_avg = display_cols.index("avg_entry_price")+1 if "avg_entry_price" in display_cols else len(display_cols)
+            for newc in ["buy_date","desired_sell_date"]:
+                if newc not in display_cols:
+                    display_cols.insert(idx_avg, newc)
+                    idx_avg += 1
+
+            # כותרות יפות ל-UI
+            df_ui = pos_df_show[display_cols].rename(columns={
+                "change_pct": "Change %",
+                "buy_date": "Buy date",
+                "desired_sell_date": "Desired sell date"
+            })
+
+            st.dataframe(df_ui, use_container_width=True)
+    except Exception as e:
+        st.error(f"Failed to fetch positions: {e}")
+
+    if st.button("Refresh positions"):
+        st.rerun()
 
 st.divider()
 st.subheader("Purchased – Follow-up (last 5 days)")
@@ -272,6 +289,7 @@ render_purchases_by_day_panel()  # Tables by purchase date + "Exit by (date)"
 
 st.divider()
 st.caption("This tool ranks candidates, not guarantees. Paper only – for learning. Logs: logs/trade_log.duckdb")
+
 
 
 
