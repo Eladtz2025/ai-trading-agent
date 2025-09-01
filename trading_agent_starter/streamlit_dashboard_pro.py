@@ -128,24 +128,24 @@ with colL:
 with colR:
 st.subheader("Open Positions (Paper)")
 try:
-    pos_df = get_open_positions()  # your existing helper
+    pos_df = get_open_positions()
     if pos_df.empty:
         st.info("No open positions.")
     else:
-        # Base columns you already show
-        cols_base = ["symbol","side","qty","avg_entry_price","current_price","market_value","unrealized_pl","unrealized_plpc"]
-        cols_base = [c for c in cols_base if c in pos_df.columns]
-        pos_df_show = pos_df[cols_base].copy()
+        # keep your original base columns
+        cols = ["symbol","side","qty","avg_entry_price","current_price","market_value","unrealized_pl","unrealized_plpc"]
+        cols = [c for c in cols if c in pos_df.columns]
+        pos_df_show = pos_df[cols].copy()
 
-        # Cast numerics (same as your code)
+        # numeric casting (your original)
         for c in ["qty","avg_entry_price","current_price","market_value","unrealized_pl","unrealized_plpc"]:
             if c in pos_df_show.columns:
                 pos_df_show[c] = pd.to_numeric(pos_df_show[c], errors="coerce")
         if "unrealized_plpc" in pos_df_show.columns:
             pos_df_show["unrealized_plpc"] = (pos_df_show["unrealized_plpc"] * 100).round(2)
 
-        # === NEW: add Buy date + Desired sell date ===
-        buy_map = load_latest_buy_info()  # {"AAPL": {"buy_date": date, "horizon_days": int|None}, ...}
+        # >>> NEW: add dates from DuckDB trades <<<
+        buy_map = load_latest_buy_info()
 
         def _buy_date(sym):
             info = buy_map.get(str(sym).upper())
@@ -153,19 +153,26 @@ try:
 
         def _desired(sym):
             info = buy_map.get(str(sym).upper())
-            return compute_desired_sell_date(info["buy_date"], info.get("horizon_days")) if info and info.get("buy_date") else None
+            if info and info.get("buy_date"):
+                return compute_desired_sell_date(info["buy_date"], info.get("horizon_days"))
+            return None
 
-        pos_df_show["Buy date"] = pos_df_show["symbol"].map(_buy_date)
-        pos_df_show["Desired sell date"] = pos_df_show["symbol"].map(_desired)
+        pos_df_show["buy_date"] = pos_df_show["symbol"].map(_buy_date)
+        pos_df_show["desired_sell_date"] = pos_df_show["symbol"].map(_desired)
 
-        # Place the two new columns right after avg_entry_price (or at the end if missing)
-        show_cols = cols_base.copy()
-        insert_at = show_cols.index("avg_entry_price")+1 if "avg_entry_price" in show_cols else len(show_cols)
-        for newc in ["Buy date","Desired sell date"]:
-            if newc not in show_cols:
-                show_cols.insert(insert_at, newc); insert_at += 1
+        # show the two new columns right after avg_entry_price
+        display_cols = cols.copy()
+        insert_at = display_cols.index("avg_entry_price")+1 if "avg_entry_price" in display_cols else len(display_cols)
+        for newc in ["buy_date","desired_sell_date"]:
+            if newc not in display_cols:
+                display_cols.insert(insert_at, newc); insert_at += 1
 
-        st.dataframe(pos_df_show[show_cols], use_container_width=True)
+        # pretty headers for UI only
+        df_ui = pos_df_show[display_cols].rename(columns={
+            "buy_date": "Buy date",
+            "desired_sell_date": "Desired sell date"
+        })
+        st.dataframe(df_ui, use_container_width=True)
 except Exception as e:
     st.error(f"Failed to fetch positions: {e}")
 
@@ -265,6 +272,7 @@ render_purchases_by_day_panel()  # Tables by purchase date + "Exit by (date)"
 
 st.divider()
 st.caption("This tool ranks candidates, not guarantees. Paper only – for learning. Logs: logs/trade_log.duckdb")
+
 
 
 
