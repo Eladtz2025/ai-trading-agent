@@ -146,3 +146,45 @@ def render_purchases_by_day_panel(db_path: str = DEFAULT_DB) -> None:
         sub = view[view["purchase_date"] == d].copy()
         st.markdown(f"### {d} — {len(sub)} purchase(s)")
         st.dataframe(sub[display_cols], use_container_width=True)
+
+# ---- Helpers for Open Positions table (append at end of file) ----
+import pandas as pd
+from datetime import timedelta
+
+def load_latest_buy_info(db_path: str = DEFAULT_DB):
+    """
+    Returns: dict like {"AAPL": {"buy_date": date, "horizon_days": int|None}, ...}
+    Based on the 'trades' table (BUY/LONG or positive qty/notional).
+    """
+    try:
+        con = _connect(db_path)
+        tables = [r[0] for r in con.execute("SHOW TABLES").fetchall()]
+        if "trades" not in tables:
+            return {}
+        df = con.execute("SELECT * FROM trades").df()
+        if df is None or df.empty:
+            return {}
+
+        norm = _normalize_trades(df)
+        if norm.empty:
+            return {}
+
+        # latest purchase per symbol
+        grp = (
+            norm
+            .groupby("symbol", as_index=False)
+            .agg({"purchase_ts": "max", "purchase_date": "max", "horizon_days": "last"})
+        )
+
+        out = {}
+        for _, r in grp.iterrows():
+            sym = str(r["symbol"]).upper()
+            out[sym] = {
+                "buy_date": r["purchase_date"],
+                "horizon_days": (int(r["horizon_days"]) if pd.notnull(r["horizon_days"]) else None),
+            }
+        return out
+    except Exception:
+        return {}
+
+def compute_desired_sell_date(buy_date, horizon_days=None, f_
